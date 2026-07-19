@@ -286,8 +286,7 @@
     messagingSenderId:"40327304863",
     appId:"1:40327304863:web:66df65d81dbae9090ab4aa"
   };
-  var fbReady=false, auth=null, db=null, uid=null, cloudTimer=null;
-  try{ if(typeof firebase!=="undefined"){ firebase.initializeApp(FCONFIG); auth=firebase.auth(); db=firebase.firestore(); fbReady=true; } }catch(e){ fbReady=false; }
+  var fbReady=false, fbFailed=false, auth=null, db=null, uid=null, cloudTimer=null;
 
   /* ---------- habit model ---------- */
   var CORE = [
@@ -557,20 +556,39 @@
   var authBtn=document.getElementById("authBtn");
   function updateAuthUI(){
     if(!authBtn) return;
-    if(!fbReady){ authBtn.textContent="On-device"; authBtn.disabled=true; authBtn.title="Sync turns on once this is hosted on your site"; return; }
+    if(!fbReady){ authBtn.textContent="On-device"; authBtn.disabled=false; authBtn.classList.remove("on"); authBtn.title=fbFailed?"Couldn't load the sync engine — likely a blocker. Tap for details.":"Sync loading…"; return; }
     authBtn.disabled=false;
     if(uid){ authBtn.textContent="☁ Synced"; authBtn.classList.add("on"); authBtn.title="Signed in — tap to sign out"; }
     else{ authBtn.textContent="☁ Turn on sync"; authBtn.classList.remove("on"); authBtn.title="Sign in with Google to sync across your devices"; }
   }
   if(authBtn){
     authBtn.addEventListener("click",function(){
-      if(!fbReady) return;
+      if(!fbReady){ alert(fbFailed ? "Sync engine (Firebase) couldn't load in this browser. This is almost always a blocker stopping Google's scripts — an ad/script blocker extension, or a DNS filter like AdGuard/Pi-hole/Brave shields. Pause it for this site, or try a different browser, then reload. Your data is safe on this device meanwhile." : "Sync is still loading — give it a second and tap again."); return; }
       if(uid){ if(confirm("Sign out? Your data stays saved in the cloud and on this device.")) auth.signOut(); }
       else{ var pv=new firebase.auth.GoogleAuthProvider(); auth.signInWithPopup(pv).catch(function(){ try{ auth.signInWithRedirect(pv); }catch(e){} }); }
     });
   }
+  function _loadScript(src){ return new Promise(function(res,rej){ var s=document.createElement("script"); s.src=src; s.async=false; s.onload=res; s.onerror=function(){ rej(new Error(src)); }; document.head.appendChild(s); }); }
+  async function _ensureFirebase(){
+    if(typeof firebase!=="undefined"&&firebase.auth&&firebase.firestore) return true;
+    for(var i=0;i<16;i++){ if(typeof firebase!=="undefined"&&firebase.auth&&firebase.firestore) return true; await new Promise(function(r){ setTimeout(r,150); }); }
+    try{
+      var b="https://cdn.jsdelivr.net/npm/firebase@10.12.5/";
+      if(typeof firebase==="undefined"||!firebase.apps){ await _loadScript(b+"firebase-app-compat.js"); }
+      if(typeof firebase==="undefined"||!firebase.auth){ await _loadScript(b+"firebase-auth-compat.js"); }
+      if(typeof firebase==="undefined"||!firebase.firestore){ await _loadScript(b+"firebase-firestore-compat.js"); }
+    }catch(e){}
+    return (typeof firebase!=="undefined"&&!!firebase.auth&&!!firebase.firestore);
+  }
+  async function initFirebase(){
+    var ok=await _ensureFirebase();
+    if(ok){ try{ firebase.initializeApp(FCONFIG); auth=firebase.auth(); db=firebase.firestore(); fbReady=true; }catch(e){ fbReady=false; fbFailed=true; } }
+    else { fbFailed=true; }
+    startAuth();
+  }
   function startAuth(){
-    if(!fbReady){ updateAuthUI(); return; }
+    updateAuthUI();
+    if(!fbReady){ return; }
     auth.onAuthStateChanged(function(user){
       if(user){
         uid=user.uid;
@@ -595,7 +613,7 @@
     var p=await localGet(PKEY); if(p) plan=p;
     var t=today(); viewY=t.getFullYear(); viewM=t.getMonth();
     renderToday(); renderPlan(); renderCal();
-    startAuth();
+    initFirebase();
   })();
 })();
 </script>
