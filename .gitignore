@@ -1,0 +1,7 @@
+# Local backup/scratch copy — not part of the deployed site
+files/
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.log

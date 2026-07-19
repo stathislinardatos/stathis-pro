@@ -27,7 +27,7 @@
   }
   *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
   html{background:#0d0a09}
-  html,body{height:100%}
+  html,body{height:100%;height:100dvh} /* dvh so iOS Safari toolbars don't clip the bottom nav */
   body{
     background:linear-gradient(180deg,var(--forge) 0%,var(--forge-2) 100%);
     color:var(--bone);font-family:'Inter',system-ui,-apple-system,sans-serif;
@@ -91,7 +91,7 @@
   .note-wrap{margin:-3px 0 8px;padding:0 1px}
   .note{width:100%;min-height:66px;resize:vertical;display:block;
     background:linear-gradient(180deg,#171210,#0f0b0a);border:1px solid var(--line);border-left:3px solid var(--ember-blood);
-    border-radius:0 0 5px 5px;color:var(--bone);font-family:'Inter',sans-serif;font-size:13.5px;line-height:1.5;padding:10px 12px;outline:none;transition:border-color .15s}
+    border-radius:0 0 5px 5px;color:var(--bone);font-family:'Inter',sans-serif;font-size:16px;line-height:1.5;padding:10px 12px;outline:none;transition:border-color .15s}
   .note:focus{border-left-color:var(--ember-hot)}
   .note::placeholder{color:var(--steel-dim)}
   .note:disabled{opacity:.4}
@@ -341,7 +341,10 @@
   }
   function cloudPush(now){
     if(!(fbReady&&uid&&db)) return;
-    var go=function(){ db.collection("users").doc(uid).set({daily:daily,plan:plan},{merge:true}).catch(function(){}); };
+    /* full-document overwrite (NOT merge): the app always holds the complete
+       dataset in memory, and merge cannot delete fields — with merge, unchecks
+       and "Reset all data" never propagate and get restored by onSnapshot. */
+    var go=function(){ db.collection("users").doc(uid).set({daily:daily,plan:plan}).catch(function(){}); };
     if(now){ go(); return; }
     clearTimeout(cloudTimer); cloudTimer=setTimeout(go,600);
   }
@@ -570,18 +573,27 @@
     if(c==="auth/configuration-not-found") return "Authentication isn't set up yet. In Firebase: Authentication → Get started, enable Google, then try again.";
     return "Sign-in error: "+((e&&e.message)||e);
   }
+  function isIOS(){ return /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform==="MacIntel" && navigator.maxTouchPoints>1); }
+  function isStandalone(){ return window.navigator.standalone===true || (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches); }
+  function doSignIn(){
+    var pv=new firebase.auth.GoogleAuthProvider();
+    /* iOS + any installed PWA: popups are unavailable/detached, so redirect. */
+    if(isIOS()||isStandalone()){
+      auth.signInWithRedirect(pv).catch(function(e){ alert(authMsg(e)); });
+      return;
+    }
+    auth.signInWithPopup(pv).catch(function(e){
+      var c=(e&&e.code)||"";
+      if(c==="auth/popup-closed-by-user"||c==="auth/cancelled-popup-request"){ return; }
+      if(c==="auth/popup-blocked"){ auth.signInWithRedirect(pv).catch(function(er){ alert(authMsg(er)); }); return; }
+      alert(authMsg(e));
+    });
+  }
   if(authBtn){
     authBtn.addEventListener("click",function(){
       if(!fbReady){ alert(fbFailed ? "Sync engine (Firebase) couldn't load in this browser. This is almost always a blocker stopping Google's scripts — an ad/script blocker extension, or a DNS filter like AdGuard/Pi-hole/Brave shields. Pause it for this site, or try a different browser, then reload. Your data is safe on this device meanwhile." : "Sync is still loading — give it a second and tap again."); return; }
       if(uid){ if(confirm("Sign out? Your data stays saved in the cloud and on this device.")) auth.signOut(); }
-      else{
-        var pv=new firebase.auth.GoogleAuthProvider();
-        auth.signInWithPopup(pv).catch(function(e){
-          var c=(e&&e.code)||"";
-          if(c==="auth/popup-closed-by-user"||c==="auth/cancelled-popup-request"){ return; }
-          alert(authMsg(e));
-        });
-      }
+      else{ doSignIn(); }
     });
   }
   function _loadScript(src){ return new Promise(function(res,rej){ var s=document.createElement("script"); s.src=src; s.async=false; s.onload=res; s.onerror=function(){ rej(new Error(src)); }; document.head.appendChild(s); }); }
@@ -605,6 +617,11 @@
   function startAuth(){
     updateAuthUI();
     if(!fbReady){ return; }
+    /* completing a signInWithRedirect: surface real errors, ignore "no redirect / user closed" */
+    auth.getRedirectResult().catch(function(e){
+      var c=(e&&e.code)||"";
+      if(c&&c!=="auth/popup-closed-by-user"&&c!=="auth/cancelled-popup-request"){ alert(authMsg(e)); }
+    });
     auth.onAuthStateChanged(function(user){
       if(user){
         uid=user.uid;
