@@ -108,6 +108,8 @@
   .nav-btn{width:38px;height:38px;border-radius:50%;border:1px solid var(--indigo-line);background:var(--indigo-2);
     color:var(--bone);font-size:17px;cursor:pointer;transition:.15s}
   .nav-btn:hover{border-color:var(--ember-hot);background:var(--indigo)}
+  .nav-btn:disabled{opacity:.3;cursor:default}
+  .nav-btn:disabled:hover{border-color:var(--indigo-line);background:var(--indigo-2)}
   .dow{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-bottom:6px}
   .dow span{text-align:center;font-family:'Oswald',sans-serif;font-size:10px;letter-spacing:.08em;color:var(--steel-dim);text-transform:uppercase}
   .grid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
@@ -253,13 +255,17 @@
     <!-- STATS -->
     <div class="screen" id="s-stats">
       <h2 class="tt">Stats</h2>
-      <div class="dateline" id="statsMonth">—</div>
-      <div class="chips">
-        <div class="chip"><div class="n hot" id="stStreak">0</div><div class="l">Best current streak</div></div>
-        <div class="chip"><div class="n" id="stMonth">0%</div><div class="l">Days struck (30d)</div></div>
-        <div class="chip"><div class="n" id="stTrain">0</div><div class="l">Trains (30d)</div></div>
+      <div class="cal-head">
+        <button class="nav-btn" id="prevSM" aria-label="Previous month">‹</button>
+        <div class="cal-title" id="statsTitle">—</div>
+        <button class="nav-btn" id="nextSM" aria-label="Next month">›</button>
       </div>
-      <div class="grouplabel">Consistency — last 30 days</div>
+      <div class="chips">
+        <div class="chip"><div class="n hot" id="stStreak">0</div><div class="l">Best streak</div></div>
+        <div class="chip"><div class="n" id="stMonth">0</div><div class="l">Days struck</div></div>
+        <div class="chip"><div class="n" id="stTrain">0</div><div class="l">Trains</div></div>
+      </div>
+      <div class="grouplabel" id="consistencyLabel">Consistency</div>
       <div id="consistency"></div>
       <button class="reset" id="reset" type="button">Reset all data</button>
     </div>
@@ -505,24 +511,46 @@
     var n=0; for(var i=0;i<7;i++){ var x=new Date(mon); x.setDate(mon.getDate()+i); if(dayData(keyOf(x)).train) n++; }
     return n;
   }
-  function last30(){ var arr=[]; var d=new Date(); for(var i=0;i<30;i++){ var x=new Date(d); x.setDate(d.getDate()-i); arr.push(x); } return arr; }
+  /* Stats has its own month cursor, independent of the Calendar tab's viewY/viewM */
+  var statsY=null, statsM=null;
+  /* every day of that month that has already happened — future days never count */
+  function monthDays(y,m){
+    var out=[], n=new Date(y,m+1,0).getDate();
+    for(var i=1;i<=n;i++){ var x=new Date(y,m,i); if(!isFuture(x)) out.push(x); }
+    return out;
+  }
+  /* longest run of core-complete days inside the slice (bounded by the month) */
+  function bestStreakIn(days){
+    var best=0, run=0;
+    for(var i=0;i<days.length;i++){
+      if(coreDone(days[i])){ run++; if(run>best) best=run; } else { run=0; }
+    }
+    return best;
+  }
   function renderStats(){
-    document.getElementById("statsMonth").textContent="Rolling 30 days";
-    var days=last30();
+    if(statsY===null){ var t0=today(); statsY=t0.getFullYear(); statsM=t0.getMonth(); }
+    document.getElementById("statsTitle").textContent = MONTHS[statsM]+" "+statsY;
+    document.getElementById("consistencyLabel").textContent = "Consistency — "+MONTHS[statsM];
+    var days=monthDays(statsY,statsM), total=days.length;
     var fullN=0, trainN=0;
     days.forEach(function(x){ if(coreDone(x)) fullN++; if(dayData(keyOf(x)).train) trainN++; });
-    document.getElementById("stStreak").textContent=streak();
-    document.getElementById("stMonth").textContent=Math.round(fullN/30*100)+"%";
+    document.getElementById("stStreak").textContent=bestStreakIn(days);
+    document.getElementById("stMonth").textContent=fullN+"/"+total;
     document.getElementById("stTrain").textContent=trainN;
     var host=document.getElementById("consistency"); host.innerHTML="";
     CORE.concat([TRAIN,SEA]).forEach(function(h){
       var hit=0; days.forEach(function(x){ if(dayData(keyOf(x))[h.id]) hit++; });
-      var pct=Math.round(hit/30*100);
+      var pct=total? Math.round(hit/total*100) : 0;
       var w=document.createElement("div"); w.className="barrow";
       w.innerHTML='<div class="top"><span>'+h.ic+' '+h.t+'</span><b>'+pct+'%</b></div><div class="bar"><i style="width:'+pct+'%"></i></div>';
       host.appendChild(w);
     });
+    /* nothing to show past the current month */
+    var t=today();
+    document.getElementById("nextSM").disabled = (statsY>t.getFullYear())||(statsY===t.getFullYear()&&statsM>=t.getMonth());
   }
+  document.getElementById("prevSM").addEventListener("click",function(){ statsM--; if(statsM<0){statsM=11;statsY--;} renderStats(); });
+  document.getElementById("nextSM").addEventListener("click",function(){ statsM++; if(statsM>11){statsM=0;statsY++;} renderStats(); });
 
   function refreshAll(){ renderToday(); if(sheetDay) renderBonusBadges(sheetDay); if(document.getElementById("s-cal").classList.contains("active")) renderCal(); if(document.getElementById("s-stats").classList.contains("active")) renderStats(); }
 
@@ -687,6 +715,7 @@
     var d=await localGet(DKEY); if(d) daily=d;
     var p=await localGet(PKEY); if(p) plan=p;
     var t=today(); viewY=t.getFullYear(); viewM=t.getMonth();
+    statsY=t.getFullYear(); statsM=t.getMonth();
     renderToday(); renderPlan(); renderCal();
     initFirebase();
   })();
