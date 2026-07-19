@@ -57,6 +57,11 @@
 
   h2.tt{font-family:'Anton',sans-serif;text-transform:uppercase;font-size:26px;letter-spacing:.01em;line-height:1}
   .dateline{font-family:'Oswald',sans-serif;text-transform:uppercase;letter-spacing:.14em;font-size:12px;color:var(--spark);margin-top:6px}
+  /* status line under the date — its own element, never overwrites .dateline */
+  .zapline{font-family:'Oswald',sans-serif;font-weight:600;text-transform:uppercase;letter-spacing:.13em;font-size:12px;
+    color:var(--spark);margin-top:5px}
+  .zapline.cold{color:var(--steel)}
+  .zapline.hot{color:var(--ember-hot)}
 
   /* stat chips */
   .chips{display:flex;gap:10px;margin:16px 0 4px}
@@ -137,6 +142,11 @@
   .sheet-h h3{font-family:'Anton',sans-serif;text-transform:uppercase;font-size:20px}
   .sheet-close{background:none;border:none;color:var(--steel);font-size:24px;cursor:pointer;line-height:1;padding:2px 6px}
   .sheet-date{font-family:'Oswald',sans-serif;text-transform:uppercase;letter-spacing:.14em;font-size:11px;color:var(--spark);margin-bottom:6px}
+  .bonus-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:2px 0 10px}
+  .bonus-row .lab{font-family:'Oswald',sans-serif;text-transform:uppercase;letter-spacing:.12em;font-size:9.5px;color:var(--steel-dim)}
+  .badge.b-train{background:var(--ember-hot);color:var(--forge)}
+  .badge.b-sea{background:var(--indigo);color:var(--bone)}
+  .badge.b-church{background:var(--spark);color:var(--forge)}
 
   /* PLAN screen */
   .sec-note{font-size:12.5px;color:var(--steel-dim);margin:10px 0 2px;line-height:1.45}
@@ -201,6 +211,7 @@
     <div class="screen active" id="s-today">
       <h2 class="tt">Today</h2>
       <div class="dateline" id="todayDate">—</div>
+      <div class="zapline" id="todayZap"></div>
       <div class="chips">
         <div class="chip"><div class="n hot" id="streakN">0</div><div class="l">Day streak</div></div>
         <div class="chip"><div class="n" id="trainN">0/4</div><div class="l">Train this week</div></div>
@@ -267,6 +278,7 @@
   <div class="sheet" role="dialog" aria-modal="true">
     <div class="sheet-h"><h3 id="sheetTitle">Day</h3><button class="sheet-close" id="sheetClose" aria-label="Close">×</button></div>
     <div class="sheet-date" id="sheetDate">—</div>
+    <div id="sheetBonus"></div>
     <div id="sheetList"></div>
   </div>
 </div>
@@ -318,10 +330,18 @@
     for(var i=0;i<set.length;i++){ if(!data[set[i].id]) return false; }
     return true;
   }
-  function coreFrac(d){
+  function coreCount(d){
     var k=keyOf(d), data=dayData(k), set=coreForDate(d), n=0;
     for(var i=0;i<set.length;i++){ if(data[set[i].id]) n++; }
-    return set.length? n/set.length : 0;
+    return {done:n, total:set.length};
+  }
+  function coreFrac(d){ var c=coreCount(d); return c.total? c.done/c.total : 0; }
+  /* status text for the Today zap line */
+  function zapFor(d){
+    var c=coreCount(d);
+    if(c.done===0) return {t:"Engine cold. Move.", cls:"cold"};
+    if(c.done<c.total) return {t:"Building momentum…", cls:""};
+    return hasBonus(d) ? {t:"🔥 OVERDRIVE MODE.", cls:"hot"} : {t:"⚡ CORE SECURED.", cls:"hot"};
   }
   function hasBonus(d){ var data=dayData(keyOf(d)); return !!(data.train||data.sea||(!isSun(d)&&data.church)); }
 
@@ -414,7 +434,10 @@
     renderChecklist(document.getElementById("todayList"), d, {});
     document.getElementById("streakN").textContent = streak();
     document.getElementById("trainN").textContent = trainThisWeek()+"/"+TRAIN_TARGET;
-    document.getElementById("todayPct").textContent = Math.round(coreFrac(d)*100)+"%";
+    var c=coreCount(d);
+    document.getElementById("todayPct").textContent = c.done+"/"+c.total;
+    var z=zapFor(d), zEl=document.getElementById("todayZap");
+    zEl.textContent = z.t; zEl.className = "zapline"+(z.cls?" "+z.cls:"");
   }
 
   /* ---------- CALENDAR ---------- */
@@ -440,13 +463,32 @@
   document.getElementById("nextM").addEventListener("click",function(){ viewM++; if(viewM>11){viewM=0;viewY++;} renderCal(); });
 
   /* ---------- day sheet ---------- */
+  var sheetDay=null;
+  /* rebuilt from scratch on every open/toggle, so rows can never stack up */
+  function renderBonusBadges(d){
+    var host=document.getElementById("sheetBonus");
+    host.innerHTML=""; host.className="";
+    var data=dayData(keyOf(d)), got=[];
+    if(data.train) got.push(["b-train","🥊 Trained"]);
+    if(data.sea)   got.push(["b-sea","🌊 Sea"]);
+    if(!isSun(d)&&data.church) got.push(["b-church","⛪ Church"]);
+    if(!got.length) return;
+    host.className="bonus-row";
+    var lab=document.createElement("span"); lab.className="lab"; lab.textContent="Achieved bonuses";
+    host.appendChild(lab);
+    got.forEach(function(b){
+      var s=document.createElement("span"); s.className="badge "+b[0]; s.textContent=b[1]; host.appendChild(s);
+    });
+  }
   function openSheet(d){
+    sheetDay=d;
     document.getElementById("sheetTitle").textContent = WD[d.getDay()];
     document.getElementById("sheetDate").textContent = d.getDate()+" "+MONTHS[d.getMonth()]+" "+d.getFullYear();
+    renderBonusBadges(d);
     renderChecklist(document.getElementById("sheetList"), d, {});
     document.getElementById("sheetBg").classList.add("open");
   }
-  function closeSheet(){ document.getElementById("sheetBg").classList.remove("open"); renderCal(); }
+  function closeSheet(){ sheetDay=null; document.getElementById("sheetBg").classList.remove("open"); renderCal(); }
   document.getElementById("sheetClose").addEventListener("click",closeSheet);
   document.getElementById("sheetBg").addEventListener("click",function(e){ if(e.target===this) closeSheet(); });
 
@@ -482,7 +524,7 @@
     });
   }
 
-  function refreshAll(){ renderToday(); if(document.getElementById("s-cal").classList.contains("active")) renderCal(); if(document.getElementById("s-stats").classList.contains("active")) renderStats(); }
+  function refreshAll(){ renderToday(); if(sheetDay) renderBonusBadges(sheetDay); if(document.getElementById("s-cal").classList.contains("active")) renderCal(); if(document.getElementById("s-stats").classList.contains("active")) renderStats(); }
 
   /* ---------- PLAN (from the battle plan) ---------- */
   var PLAN={
